@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Environment
+.env
+
+# Runtime data (file-system backend)
+data/
+
+# Editor
+.vscode/*.log
