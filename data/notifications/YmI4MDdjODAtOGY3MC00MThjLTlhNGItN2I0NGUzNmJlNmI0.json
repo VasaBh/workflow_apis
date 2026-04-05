@@ -1,0 +1,1 @@
+{"_id": "bb807c80-8f70-418c-9a4b-7b44e36be6b4", "user_id": "user-executor-001", "event_type": "run_completed", "title": "Workflow completed", "message": "Run ace398f4-f9ba-418b-a3d4-5171809c53f2 completed successfully", "read": false, "created_at": "2026-04-04T22:13:52.533193+00:00", "reference_id": "ace398f4-f9ba-418b-a3d4-5171809c53f2"}

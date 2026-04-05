@@ -9,8 +9,6 @@ venv/
 # Environment
 .env
 
-# Runtime data (file-system backend)
-data/
 
 # Editor
 .vscode/*.log

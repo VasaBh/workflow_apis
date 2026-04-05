@@ -1,0 +1,1 @@
+{"_id": "90892a9c-e6f8-4564-a762-c9f48127ffe2", "user_id": "user-executor-001", "event_type": "step_started", "title": "Step started: Ingest Data", "message": "Step 'Ingest Data' has started in run 31279d6b-401a-442b-8c8e-23fa1fc68d7a", "read": false, "created_at": "2026-04-04T19:57:24.160064+00:00", "reference_id": "d73d952a-8cf6-4b9d-a24a-5899bb1b7ca5"}

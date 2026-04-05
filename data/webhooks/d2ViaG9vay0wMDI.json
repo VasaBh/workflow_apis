@@ -1,0 +1,1 @@
+{"_id": "webhook-002", "name": "CI/CD Trigger", "url": "https://ci.example.com/hooks/workflow", "events": ["run_completed"], "secret": "ci-hmac-secret", "active": false, "created_at": "2026-02-01T00:00:00+00:00"}

@@ -1,0 +1,1 @@
+{"_id": "55cd36bf-1851-4a67-92d1-fd7e5edc9f97", "user_id": "user-executor-001", "event_type": "run_cancelled", "title": "Run cancelled", "message": "Run run-003 was cancelled", "read": false, "created_at": "2026-04-04T20:39:29.267036+00:00", "reference_id": "run-003"}

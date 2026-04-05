@@ -1,0 +1,1 @@
+{"_id": "notif-002", "user_id": "user-admin-001", "event_type": "run_failed", "title": "Run Failed", "message": "Daily Data Pipeline run-002 failed at step Validate Data", "read": true, "created_at": "2026-03-02T09:02:00+00:00", "reference_id": "run-002"}

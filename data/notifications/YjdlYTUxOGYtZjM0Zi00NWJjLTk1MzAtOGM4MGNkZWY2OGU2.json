@@ -1,0 +1,1 @@
+{"_id": "b7ea518f-f34f-45bc-9530-8c80cdef68e6", "user_id": "user-admin-001", "event_type": "step_completed", "title": "Manual step completed: Test1", "message": "Step 'Test1' was manually completed", "read": true, "created_at": "2026-04-04T23:21:00.848423+00:00", "reference_id": "b963a5f5-141b-4891-8df4-1b791dbb7487"}

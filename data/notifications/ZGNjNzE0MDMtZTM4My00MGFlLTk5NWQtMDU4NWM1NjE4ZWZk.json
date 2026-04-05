@@ -1,0 +1,1 @@
+{"_id": "dcc71403-e383-40ae-995d-0585c5618efd", "user_id": "user-admin-001", "event_type": "step_failed", "title": "Step failed: Ingest Data", "message": "Step 'Ingest Data' failed: TypeError: main() got an unexpected keyword argument 'source'", "read": true, "created_at": "2026-04-04T09:00:17.350570+00:00", "reference_id": "062be83f-33a6-46bc-ae32-cea05da68ac8"}

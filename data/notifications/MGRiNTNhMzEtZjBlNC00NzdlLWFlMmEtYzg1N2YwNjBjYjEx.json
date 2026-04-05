@@ -1,0 +1,1 @@
+{"_id": "0db53a31-f0e4-477e-ae2a-c857f060cb11", "user_id": "user-editor-001", "event_type": "step_failed", "title": "Step failed: To Fail Block", "message": "Step 'To Fail Block' failed: KeyError: 'i'", "read": false, "created_at": "2026-04-04T20:57:43.813305+00:00", "reference_id": "340ec6e5-f238-43df-a1c3-0f3f2a3be03c"}

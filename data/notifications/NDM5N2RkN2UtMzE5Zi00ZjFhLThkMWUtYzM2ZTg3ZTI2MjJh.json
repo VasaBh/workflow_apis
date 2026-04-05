@@ -1,0 +1,1 @@
+{"_id": "4397dd7e-319f-4f1a-8d1e-c36e87e2622a", "user_id": "user-admin-001", "event_type": "run_failed", "title": "Workflow failed", "message": "Run f2fb3fb7-7990-41b8-8ac2-90f6db26497c failed", "read": true, "created_at": "2026-04-04T20:57:43.830183+00:00", "reference_id": "f2fb3fb7-7990-41b8-8ac2-90f6db26497c"}

@@ -1,0 +1,1 @@
+{"_id": "d570b225-58f1-40e5-80d1-6e9b43fd72f2", "user_id": "user-executor-001", "event_type": "step_started", "title": "Step started: Test1", "message": "Step 'Test1' has started in run 3f3fab03-b80f-44e7-8776-a8b6abbc563a", "read": false, "created_at": "2026-04-05T00:05:01.558618+00:00", "reference_id": "3ababf6b-0edb-49f2-9397-0d7d733a1f59"}

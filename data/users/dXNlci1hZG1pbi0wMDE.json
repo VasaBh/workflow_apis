@@ -1,0 +1,1 @@
+{"_id": "user-admin-001", "name": "admin", "email": "admin@example.com", "password_hash": "$2b$12$uTKg/sNFD0S/WeljrHbNIe0kPZPAhpRER7XGOD9XYViopjeuRe51K", "role": "admin", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}
