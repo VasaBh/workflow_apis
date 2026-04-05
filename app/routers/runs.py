@@ -17,8 +17,33 @@ from app.notifications import notify_all_users, trigger_webhooks
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
 
 
+def _calc_progress(step_runs: list) -> dict:
+    """Compute progress from a flat list of step_run dicts."""
+    # Only count leaf steps (no children) to avoid double-counting parent groups
+    parent_ids = {s.get("parent_id") for s in step_runs if s.get("parent_id")}
+    leaf_runs = [sr for sr in step_runs if sr.get("step_id") not in parent_ids]
+    total = len(leaf_runs)
+    if total == 0:
+        return {"total": 0, "completed": 0, "failed": 0, "skipped": 0, "in_progress": 0, "not_started": 0, "percentage": 0}
+    completed  = sum(1 for s in leaf_runs if s.get("status") == "completed")
+    failed     = sum(1 for s in leaf_runs if s.get("status") in ("failed", "blocked"))
+    skipped    = sum(1 for s in leaf_runs if s.get("status") == "skipped")
+    in_progress = sum(1 for s in leaf_runs if s.get("status") == "in_progress")
+    not_started = sum(1 for s in leaf_runs if s.get("status") in ("not_started", "cancelled"))
+    done = completed + failed + skipped
+    return {
+        "total": total,
+        "completed": completed,
+        "failed": failed,
+        "skipped": skipped,
+        "in_progress": in_progress,
+        "not_started": not_started,
+        "percentage": round(done / total * 100),
+    }
+
+
 async def _attach_blueprint_name(db, runs: list) -> list:
-    """Add blueprint_name to each run dict."""
+    """Add blueprint_name and progress to each run dict."""
     bp_cache: dict = {}
     for run in runs:
         bp_id = run.get("blueprint_id")
@@ -26,6 +51,10 @@ async def _attach_blueprint_name(db, runs: list) -> list:
             bp = await db["blueprints"].find_one({"_id": bp_id})
             bp_cache[bp_id] = bp.get("name") if bp else None
         run["blueprint_name"] = bp_cache[bp_id]
+        run_id = run.get("id") or run.get("_id")
+        step_runs_cursor = db["step_runs"].find({"run_id": run_id})
+        step_runs = await step_runs_cursor.to_list(length=10000)
+        run["progress"] = _calc_progress(step_runs)
     return runs
 
 
@@ -200,6 +229,7 @@ async def get_run(
         else:
             roots.append(sr)
 
+    run_dict["progress"] = _calc_progress(all_step_runs)
     run_dict["steps"] = roots
     return success_response(run_dict)
 
@@ -394,6 +424,7 @@ async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
                 "run_id": run_id,
                 "run_status": current_run_status,
                 "step_updates": step_updates,
+                "progress": _calc_progress(step_runs),
             }
             yield f"data: {json.dumps(payload, default=str)}\n\n"
 
