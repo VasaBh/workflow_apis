@@ -22,17 +22,28 @@ def validate_cron(cron_expression: str) -> bool:
 
 
 def get_next_run(cron_expression: str, timezone_str: str = "UTC") -> Optional[str]:
-    """Get next run datetime from cron expression."""
+    """Get next run datetime from cron expression.
+
+    Cron is evaluated in the schedule's local timezone, but the result is
+    always stored as a UTC ISO string so that comparisons in check_due_schedules
+    are consistent.
+    """
     try:
         from croniter import croniter
         import zoneinfo
         try:
             tz = zoneinfo.ZoneInfo(timezone_str)
-            now = datetime.now(tz)
         except Exception:
-            now = datetime.now(timezone.utc)
-        cron = croniter(cron_expression, now)
-        return cron.get_next(datetime).isoformat()
+            tz = timezone.utc
+
+        now_local = datetime.now(tz)
+        cron = croniter(cron_expression, now_local)
+        # get_next returns a naive datetime interpreted in the local tz
+        next_local_naive = cron.get_next(datetime)
+        # Attach local tz then convert to UTC for consistent storage
+        next_local = next_local_naive.replace(tzinfo=tz)
+        next_utc = next_local.astimezone(timezone.utc)
+        return next_utc.isoformat()
     except Exception:
         return None
 

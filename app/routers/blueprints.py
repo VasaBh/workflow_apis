@@ -27,6 +27,14 @@ class CloneBlueprintRequest(BaseModel):
     name: str
 
 
+async def _attach_counts(db, blueprints: list) -> list:
+    for bp in blueprints:
+        bp_id = bp["id"]
+        bp["step_count"] = await db["steps"].count_documents({"blueprint_id": bp_id})
+        bp["run_count"] = await db["runs"].count_documents({"blueprint_id": bp_id})
+    return blueprints
+
+
 async def get_step_tree(db, blueprint_id: str) -> List[dict]:
     """Build a tree of steps for a blueprint."""
     steps_cursor = db["steps"].find({"blueprint_id": blueprint_id}).sort("order", 1)
@@ -98,7 +106,8 @@ async def list_blueprints(
         db["blueprints"], query, commons.page, commons.limit,
         commons.sort, commons.sort_direction
     )
-    return success_response(docs_to_list(docs), paginate_meta(commons.page, commons.limit, total))
+    blueprints = await _attach_counts(db, docs_to_list(docs))
+    return success_response(blueprints, paginate_meta(commons.page, commons.limit, total))
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -147,6 +156,8 @@ async def get_blueprint(
         )
 
     bp_dict = doc_to_dict(bp)
+    bp_dict["step_count"] = await db["steps"].count_documents({"blueprint_id": blueprint_id})
+    bp_dict["run_count"] = await db["runs"].count_documents({"blueprint_id": blueprint_id})
     bp_dict["steps"] = await get_step_tree(db, blueprint_id)
     return success_response(bp_dict)
 

@@ -1,6 +1,13 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
