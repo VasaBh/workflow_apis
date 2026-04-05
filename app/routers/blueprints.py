@@ -14,11 +14,13 @@ router = APIRouter(prefix="/v1/blueprints", tags=["blueprints"])
 class CreateBlueprintRequest(BaseModel):
     name: str
     description: Optional[str] = None
+    sequential: bool = False
 
 
 class UpdateBlueprintRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    sequential: Optional[bool] = None
 
 
 class CloneBlueprintRequest(BaseModel):
@@ -118,6 +120,7 @@ async def create_blueprint(
         "_id": bp_id,
         "name": body.name,
         "description": body.description,
+        "sequential": body.sequential,
         "status": "draft",
         "version": 1,
         "created_at": now,
@@ -179,6 +182,8 @@ async def update_blueprint(
         updates["name"] = body.name
     if body.description is not None:
         updates["description"] = body.description
+    if body.sequential is not None:
+        updates["sequential"] = body.sequential
 
     await db["blueprints"].update_one({"_id": blueprint_id}, {"$set": updates})
     updated = await db["blueprints"].find_one({"_id": blueprint_id})

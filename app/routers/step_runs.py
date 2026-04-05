@@ -7,6 +7,7 @@ from app.database import get_db, doc_to_dict, docs_to_list
 from app.dependencies import get_current_user, require_roles, CommonQueryParams
 from app.response import success_response, error_response, paginate, paginate_meta
 from app.notifications import notify_all_users, trigger_webhooks
+from app.execution import execute_run
 
 router = APIRouter(prefix="/v1/runs/{run_id}/steps", tags=["step_runs"])
 
@@ -31,6 +32,16 @@ class ApproveStepRequest(BaseModel):
 
 class RejectStepRequest(BaseModel):
     reason: str
+
+
+async def _finalize_run_if_done(run_id: str):
+    """After a manual step update, resume the execution engine.
+
+    execute_run is re-entrant — it skips already-terminal steps, runs any
+    pending downstream steps, updates run status, and fires notifications.
+    """
+    import asyncio
+    asyncio.create_task(execute_run(run_id))
 
 
 async def get_run_or_404(db, run_id: str):
@@ -193,6 +204,7 @@ async def complete_step(
         reference_id=step_id,
     )
     await trigger_webhooks("step_completed", {"step_run_id": step_id, "run_id": run_id})
+    await _finalize_run_if_done(run_id)
 
     updated = await db["step_runs"].find_one({"_id": step_id})
     return success_response(doc_to_dict(updated))
@@ -232,6 +244,7 @@ async def fail_step(
         reference_id=step_id,
     )
     await trigger_webhooks("step_failed", {"step_run_id": step_id, "run_id": run_id, "error": body.error})
+    await _finalize_run_if_done(run_id)
 
     updated = await db["step_runs"].find_one({"_id": step_id})
     return success_response(doc_to_dict(updated))
@@ -279,6 +292,7 @@ async def skip_step(
         reference_id=step_id,
     )
     await trigger_webhooks("step_skipped", {"step_run_id": step_id, "run_id": run_id})
+    await _finalize_run_if_done(run_id)
 
     updated = await db["step_runs"].find_one({"_id": step_id})
     return success_response(doc_to_dict(updated))
@@ -326,6 +340,7 @@ async def approve_step(
         reference_id=step_id,
     )
     await trigger_webhooks("approval_approved", {"step_run_id": step_id, "run_id": run_id, "approved_by": current_user["id"]})
+    await _finalize_run_if_done(run_id)
 
     updated = await db["step_runs"].find_one({"_id": step_id})
     return success_response(doc_to_dict(updated))
@@ -374,6 +389,7 @@ async def reject_step(
         reference_id=step_id,
     )
     await trigger_webhooks("approval_rejected", {"step_run_id": step_id, "run_id": run_id, "rejected_by": current_user["id"]})
+    await _finalize_run_if_done(run_id)
 
     updated = await db["step_runs"].find_one({"_id": step_id})
     return success_response(doc_to_dict(updated))

@@ -32,6 +32,7 @@ class CreateStepRequest(BaseModel):
 class UpdateStepRequest(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None
+    order: Optional[int] = None
     script_id: Optional[str] = None
     script_params: Optional[dict] = None
     entry: Optional[str] = None
@@ -84,6 +85,29 @@ async def get_all_child_ids(db, step_id: str, blueprint_id: str) -> List[str]:
         ids.append(child["_id"])
         ids.extend(await get_all_child_ids(db, child["_id"], blueprint_id))
     return ids
+
+
+@router.put("/reorder")
+async def reorder_steps(
+    blueprint_id: str,
+    body: ReorderRequest,
+    current_user: dict = Depends(require_roles("admin", "editor")),
+):
+    db = get_db()
+    bp = await db["blueprints"].find_one({"_id": blueprint_id})
+    if not bp:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response("BLUEPRINT_NOT_FOUND", "Blueprint not found"),
+        )
+
+    for idx, step_id in enumerate(body.step_ids):
+        await db["steps"].update_one(
+            {"_id": step_id, "blueprint_id": blueprint_id},
+            {"$set": {"order": idx}},
+        )
+
+    return success_response({"message": "Steps reordered successfully"})
 
 
 @router.get("/")
@@ -198,7 +222,22 @@ async def update_step(
     current_user: dict = Depends(require_roles("admin", "editor")),
 ):
     db = get_db()
-    await check_blueprint_published(db, blueprint_id)
+
+    # Allow order-only updates on published blueprints (non-breaking, affects future runs only).
+    # Any other field change still requires the blueprint to be in draft state.
+    non_order_fields = [f for f in ["name", "type", "script_id", "script_params", "entry",
+                                     "dependencies", "on_failure", "retry_count", "timeout_seconds",
+                                     "validation_rules"]
+                        if getattr(body, f, None) is not None]
+    if non_order_fields:
+        await check_blueprint_published(db, blueprint_id)
+    else:
+        bp = await db["blueprints"].find_one({"_id": blueprint_id})
+        if not bp:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_response("BLUEPRINT_NOT_FOUND", "Blueprint not found"),
+            )
 
     step = await db["steps"].find_one({"_id": step_id, "blueprint_id": blueprint_id})
     if not step:
@@ -216,7 +255,7 @@ async def update_step(
             )
 
     updates = {}
-    for field in ["name", "type", "script_id", "script_params", "entry",
+    for field in ["name", "type", "order", "script_id", "script_params", "entry",
                   "dependencies", "on_failure", "retry_count", "timeout_seconds", "validation_rules"]:
         val = getattr(body, field)
         if val is not None:
@@ -263,28 +302,3 @@ async def delete_step(
 
     await db["steps"].delete_many({"_id": {"$in": all_ids}})
     return success_response({"message": "Step deleted successfully", "deleted_count": len(all_ids)})
-
-
-@router.put("/reorder")
-async def reorder_steps(
-    blueprint_id: str,
-    body: ReorderRequest,
-    current_user: dict = Depends(require_roles("admin", "editor")),
-):
-    db = get_db()
-    await check_blueprint_published(db, blueprint_id)
-
-    bp = await db["blueprints"].find_one({"_id": blueprint_id})
-    if not bp:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_response("BLUEPRINT_NOT_FOUND", "Blueprint not found"),
-        )
-
-    for idx, step_id in enumerate(body.step_ids):
-        await db["steps"].update_one(
-            {"_id": step_id, "blueprint_id": blueprint_id},
-            {"$set": {"order": idx}},
-        )
-
-    return success_response({"message": "Steps reordered successfully"})

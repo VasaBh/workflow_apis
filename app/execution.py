@@ -72,7 +72,7 @@ async def _update_run_status(db, run_id: str):
     statuses = [sr["status"] for sr in step_runs]
     now = datetime.now(timezone.utc).isoformat()
 
-    if all(s == "completed" for s in statuses):
+    if all(s in ("completed", "skipped") for s in statuses):
         new_status = "completed"
     elif any(s == "failed" for s in statuses):
         new_status = "failed"
@@ -82,8 +82,6 @@ async def _update_run_status(db, run_id: str):
         new_status = "in_progress"  # Run is still going, just waiting
     elif any(s == "paused" for s in statuses):
         new_status = "paused"
-    elif all(s == "skipped" for s in statuses):
-        new_status = "completed"
     else:
         new_status = "in_progress"
 
@@ -156,7 +154,6 @@ async def _execute_step_run(db, step_run: dict, run_id: str):
         else:
             on_failure = step_run.get("on_failure", "block")
             if on_failure == "retry" and step_run.get("retry_count", 0) > 0:
-                # Simple retry: just run again up to retry_count times
                 for attempt in range(step_run.get("retry_count", 0)):
                     result = await execute_script(
                         script["code"], script["entry"], params, timeout_seconds=min(timeout, 300)
@@ -197,8 +194,7 @@ async def _execute_step_run(db, step_run: dict, run_id: str):
                 return "failed"
 
     elif step_type in ("manual", "approval"):
-        # Block until manually completed/approved
-        status_val = "blocked"
+        # Block until manually completed/approved via the step_runs API
         if step_type == "approval":
             await notify_all_users(
                 "approval_required",
@@ -208,10 +204,9 @@ async def _execute_step_run(db, step_run: dict, run_id: str):
                 roles=["admin", "executor"],
             )
 
-        await _update_step_run(db, step_run_id, {"status": status_val})
-        return status_val
+        await _update_step_run(db, step_run_id, {"status": "blocked"})
+        return "blocked"
     else:
-        # Unknown type, mark as failed
         await _update_step_run(db, step_run_id, {
             "status": "failed",
             "error": f"Unknown step type: {step_type}",
@@ -221,60 +216,82 @@ async def _execute_step_run(db, step_run: dict, run_id: str):
 
 
 async def execute_run(run_id: str):
-    """Main execution engine. Runs steps in order respecting dependencies."""
+    """
+    Main execution engine. Safe to call multiple times — resumes from
+    where it left off by skipping already-terminal steps and pre-loading
+    completed/skipped/failed sets from the current DB state.
+
+    Dependencies are matched against step_id (blueprint step reference),
+    not against step_run._id.
+    """
     db = get_db()
     run = await db["runs"].find_one({"_id": run_id})
     if not run:
         return
 
+    # If the run is already in a terminal state, do nothing
+    if run.get("status") in ("completed", "failed", "cancelled"):
+        return
+
     now = datetime.now(timezone.utc).isoformat()
-    await db["runs"].update_one(
-        {"_id": run_id},
-        {"$set": {"status": "in_progress", "started_at": now}},
-    )
+    is_first_start = not run.get("started_at")
+    update_fields = {"status": "in_progress", "updated_at": now}
+    if is_first_start:
+        update_fields["started_at"] = now
 
-    await notify_all_users(
-        "run_started",
-        "Workflow run started",
-        f"Run {run_id} has started",
-        reference_id=run_id,
-    )
-    await trigger_webhooks("run_started", {"run_id": run_id, "blueprint_id": run.get("blueprint_id")})
+    await db["runs"].update_one({"_id": run_id}, {"$set": update_fields})
 
-    # Get all step_runs ordered
+    if is_first_start:
+        await notify_all_users(
+            "run_started",
+            "Workflow run started",
+            f"Run {run_id} has started",
+            reference_id=run_id,
+        )
+        await trigger_webhooks("run_started", {"run_id": run_id, "blueprint_id": run.get("blueprint_id")})
+
+    # Load all step_runs
     all_step_runs_cursor = db["step_runs"].find({"run_id": run_id}).sort("order", 1)
     all_step_runs = await all_step_runs_cursor.to_list(length=10000)
 
-    completed_steps = set()
-    failed_steps = set()
-    skipped_steps = set()
+    # -----------------------------------------------------------------------
+    # FIX: dependencies contain blueprint step IDs (step_run["step_id"]).
+    # We must track step_id — not step_run._id — in these sets so that
+    # dep-checks like `dep in completed_steps` work correctly.
+    # -----------------------------------------------------------------------
+    terminal_statuses = {"completed", "skipped", "failed", "blocked", "cancelled"}
 
-    # Process step runs in topological/dependency order
-    pending = list(all_step_runs)
-    max_iterations = len(pending) * 2 + 10
+    completed_steps = {sr["step_id"] for sr in all_step_runs if sr["status"] == "completed"}
+    skipped_steps   = {sr["step_id"] for sr in all_step_runs if sr["status"] == "skipped"}
+    failed_steps    = {sr["step_id"] for sr in all_step_runs if sr["status"] in ("failed", "blocked")}
 
+    # Only process steps that are not yet in a terminal state
+    pending = [sr for sr in all_step_runs if sr["status"] not in terminal_statuses]
+
+    max_iterations = len(all_step_runs) * 2 + 10
     iteration = 0
+
     while pending and iteration < max_iterations:
         iteration += 1
         made_progress = False
 
         for step_run in list(pending):
-            # Check if run was paused or cancelled
+            # Check if run was paused or cancelled externally
             current_run = await db["runs"].find_one({"_id": run_id}, {"status": 1})
             if current_run and current_run["status"] in ("paused", "cancelled"):
                 return
 
             step_run_id = step_run["_id"]
+            step_blueprint_id = step_run["step_id"]   # blueprint step reference
             dependencies = step_run.get("dependencies", [])
 
-            # Check if all dependencies are done
+            # dependencies are blueprint step IDs — compare against step_id sets
             deps_met = all(
                 dep in completed_steps or dep in skipped_steps
                 for dep in dependencies
             )
 
             if not deps_met:
-                # Check if any dependency failed and on_failure is block
                 any_dep_failed = any(dep in failed_steps for dep in dependencies)
                 if any_dep_failed:
                     on_failure = step_run.get("on_failure", "block")
@@ -283,15 +300,13 @@ async def execute_run(run_id: str):
                             "status": "skipped",
                             "completed_at": datetime.now(timezone.utc).isoformat(),
                         })
-                        skipped_steps.add(step_run_id)
+                        skipped_steps.add(step_blueprint_id)
                         pending.remove(step_run)
                         made_progress = True
-                    elif on_failure == "block":
-                        await _update_step_run(db, step_run_id, {
-                            "status": "blocked",
-                        })
+                    else:
+                        await _update_step_run(db, step_run_id, {"status": "blocked"})
+                        failed_steps.add(step_blueprint_id)
                         pending.remove(step_run)
-                        failed_steps.add(step_run_id)
                         made_progress = True
                 continue
 
@@ -307,61 +322,54 @@ async def execute_run(run_id: str):
                         "completed_at": datetime.now(timezone.utc).isoformat(),
                     })
                     if final_status == "skipped":
-                        skipped_steps.add(step_run_id)
+                        skipped_steps.add(step_blueprint_id)
                     else:
-                        failed_steps.add(step_run_id)
+                        failed_steps.add(step_blueprint_id)
                     pending.remove(step_run)
                     made_progress = True
                     continue
 
-            # Execute step
+            # Execute the step
             result_status = await _execute_step_run(db, step_run, run_id)
 
-            if result_status in ("completed", "skipped"):
-                if result_status == "completed":
-                    completed_steps.add(step_run_id)
-                else:
-                    skipped_steps.add(step_run_id)
+            if result_status == "completed":
+                completed_steps.add(step_blueprint_id)
                 pending.remove(step_run)
                 made_progress = True
+                if parent_id:
+                    await _rollup_parent_status(db, run_id, parent_id)
 
-                # Roll up parent status
+            elif result_status == "skipped":
+                skipped_steps.add(step_blueprint_id)
+                pending.remove(step_run)
+                made_progress = True
                 if parent_id:
                     await _rollup_parent_status(db, run_id, parent_id)
 
             elif result_status == "failed":
-                failed_steps.add(step_run_id)
+                failed_steps.add(step_blueprint_id)
                 pending.remove(step_run)
                 made_progress = True
-
                 if parent_id:
                     await _rollup_parent_status(db, run_id, parent_id)
 
-            elif result_status in ("blocked",):
-                # Manual/approval steps: remove from pending, they'll be updated externally
+            elif result_status == "blocked":
+                # Manual/approval step — leave in DB as blocked, stop processing
+                # it here. The step_runs API will complete it and re-call execute_run.
                 pending.remove(step_run)
                 made_progress = True
-                # Roll up parent status
                 if parent_id:
                     await _rollup_parent_status(db, run_id, parent_id)
 
         if not made_progress:
-            # Stuck — either all blocked/manual or circular deps
-            await asyncio.sleep(2)
+            break
 
-    # Determine final run status
+    # Determine and persist final run status
     final_status = await _update_run_status(db, run_id)
 
-    run_event = None
     if final_status == "completed":
-        run_event = "run_completed"
-        msg = f"Run {run_id} completed successfully"
+        await notify_all_users("run_completed", "Workflow completed", f"Run {run_id} completed successfully", reference_id=run_id)
+        await trigger_webhooks("run_completed", {"run_id": run_id})
     elif final_status == "failed":
-        run_event = "run_failed"
-        msg = f"Run {run_id} failed"
-    else:
-        msg = None
-
-    if run_event:
-        await notify_all_users(run_event, f"Workflow {final_status}", msg, reference_id=run_id)
-        await trigger_webhooks(run_event, {"run_id": run_id})
+        await notify_all_users("run_failed", "Workflow failed", f"Run {run_id} failed", reference_id=run_id)
+        await trigger_webhooks("run_failed", {"run_id": run_id})

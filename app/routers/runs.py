@@ -17,6 +17,18 @@ from app.notifications import notify_all_users, trigger_webhooks
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
 
 
+async def _attach_blueprint_name(db, runs: list) -> list:
+    """Add blueprint_name to each run dict."""
+    bp_cache: dict = {}
+    for run in runs:
+        bp_id = run.get("blueprint_id")
+        if bp_id not in bp_cache:
+            bp = await db["blueprints"].find_one({"_id": bp_id})
+            bp_cache[bp_id] = bp.get("name") if bp else None
+        run["blueprint_name"] = bp_cache[bp_id]
+    return runs
+
+
 class CreateRunRequest(BaseModel):
     blueprint_id: str
     context: dict = {}
@@ -48,7 +60,8 @@ async def list_runs(
         db["runs"], query, commons.page, commons.limit,
         commons.sort, commons.sort_direction
     )
-    return success_response(docs_to_list(docs), paginate_meta(commons.page, commons.limit, total))
+    runs = await _attach_blueprint_name(db, docs_to_list(docs))
+    return success_response(runs, paginate_meta(commons.page, commons.limit, total))
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -91,7 +104,29 @@ async def create_run(
     steps_cursor = db["steps"].find({"blueprint_id": body.blueprint_id}).sort("order", 1)
     steps = await steps_cursor.to_list(length=10000)
 
-    # Build mapping: step._id -> step_run_id (step_id field references blueprint step)
+    # For sequential blueprints, auto-derive dependencies from order within each parent group.
+    # Each step (after the first in its group) depends on the previous step in the same group.
+    sequential = bp.get("sequential", False)
+    if sequential:
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        for step in steps:
+            groups[step.get("parent_id")].append(step)
+        # Groups are already sorted by order (steps cursor sorted by order)
+        seq_deps: dict = {}  # step._id -> [prev_step._id]
+        for group_steps in groups.values():
+            for i, step in enumerate(group_steps):
+                if i == 0:
+                    seq_deps[step["_id"]] = step.get("dependencies", [])
+                else:
+                    prev_id = group_steps[i - 1]["_id"]
+                    existing = list(step.get("dependencies", []))
+                    if prev_id not in existing:
+                        existing.append(prev_id)
+                    seq_deps[step["_id"]] = existing
+    else:
+        seq_deps = {step["_id"]: step.get("dependencies", []) for step in steps}
+
     for step in steps:
         step_run_id = str(uuid.uuid4())
         step_run_doc = {
@@ -105,7 +140,7 @@ async def create_run(
             "script_id": step.get("script_id"),
             "script_params": step.get("script_params", {}),
             "entry": step.get("entry"),
-            "dependencies": step.get("dependencies", []),
+            "dependencies": seq_deps[step["_id"]],
             "on_failure": step.get("on_failure", "block"),
             "retry_count": step.get("retry_count", 0),
             "timeout_seconds": step.get("timeout_seconds", 300),
@@ -140,6 +175,8 @@ async def get_run(
         )
 
     run_dict = doc_to_dict(run)
+    bp = await db["blueprints"].find_one({"_id": run_dict["blueprint_id"]})
+    run_dict["blueprint_name"] = bp.get("name") if bp else None
 
     # Get step runs tree
     step_runs_cursor = db["step_runs"].find({"run_id": run_id}).sort("order", 1)
@@ -319,10 +356,11 @@ async def retry_run(
 
 
 async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
-    """Generate SSE events for a run's step status updates."""
+    """Generate SSE events for run and step status changes."""
     db = get_db()
     terminal_states = {"completed", "failed", "cancelled"}
-    last_states = {}
+    last_run_status = None
+    last_step_states: dict = {}
 
     while True:
         run = await db["runs"].find_one({"_id": run_id}, {"status": 1})
@@ -330,32 +368,37 @@ async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
             yield f"data: {json.dumps({'error': 'Run not found'})}\n\n"
             break
 
+        current_run_status = run["status"]
+        run_changed = current_run_status != last_run_status
+        last_run_status = current_run_status
+
         step_runs_cursor = db["step_runs"].find({"run_id": run_id})
         step_runs = await step_runs_cursor.to_list(length=10000)
 
-        updates = []
+        step_updates = []
         for sr in step_runs:
             sr_id = str(sr["_id"])
             current_status = sr.get("status")
-            if last_states.get(sr_id) != current_status:
-                last_states[sr_id] = current_status
-                updates.append({
+            if last_step_states.get(sr_id) != current_status:
+                last_step_states[sr_id] = current_status
+                step_updates.append({
                     "step_run_id": sr_id,
                     "step_id": sr.get("step_id"),
                     "name": sr.get("name"),
                     "status": current_status,
                 })
 
-        if updates:
+        # Emit whenever the run status OR any step status changes
+        if run_changed or step_updates:
             payload = {
                 "run_id": run_id,
-                "run_status": run["status"],
-                "step_updates": updates,
+                "run_status": current_run_status,
+                "step_updates": step_updates,
             }
             yield f"data: {json.dumps(payload, default=str)}\n\n"
 
-        if run["status"] in terminal_states:
-            yield f"data: {json.dumps({'run_id': run_id, 'run_status': run['status'], 'done': True})}\n\n"
+        if current_run_status in terminal_states:
+            yield f"data: {json.dumps({'run_id': run_id, 'run_status': current_run_status, 'done': True})}\n\n"
             break
 
         await asyncio.sleep(1)

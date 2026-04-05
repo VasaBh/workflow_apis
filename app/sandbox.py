@@ -102,7 +102,7 @@ def _run_in_sandbox(code: str, entry: str, params: dict) -> dict:
                 "duration_ms": int(time.time() * 1000) - start_ms,
             }
 
-        output = func(**params)
+        output = func(params)
 
         return {
             "valid": True,

@@ -185,13 +185,17 @@ class FileCursor:
 
         if self._sort_field:
             reverse = self._sort_dir == -1
-            docs.sort(
-                key=lambda d: (
-                    d.get(self._sort_field) is None,
-                    d.get(self._sort_field) or "",
-                ),
-                reverse=reverse,
-            )
+            field = self._sort_field
+
+            def _sort_key(d):
+                val = d.get(field)
+                if val is None:
+                    return (1, 0, "")
+                if isinstance(val, (int, float)):
+                    return (0, val, "")
+                return (0, 0, str(val))
+
+            docs.sort(key=_sort_key, reverse=reverse)
 
         docs = docs[self._skip_n:]
         if self._limit_n is not None:
