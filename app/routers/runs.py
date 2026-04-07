@@ -26,9 +26,9 @@ def _calc_progress(step_runs: list) -> dict:
     if total == 0:
         return {"total": 0, "completed": 0, "failed": 0, "skipped": 0, "in_progress": 0, "not_started": 0, "percentage": 0}
     completed  = sum(1 for s in leaf_runs if s.get("status") == "completed")
-    failed     = sum(1 for s in leaf_runs if s.get("status") in ("failed", "blocked"))
+    failed     = sum(1 for s in leaf_runs if s.get("status") in ("failed"))
     skipped    = sum(1 for s in leaf_runs if s.get("status") == "skipped")
-    in_progress = sum(1 for s in leaf_runs if s.get("status") == "in_progress")
+    in_progress = sum(1 for s in leaf_runs if s.get("status") in ("in_progress", "blocked"))
     not_started = sum(1 for s in leaf_runs if s.get("status") in ("not_started", "cancelled"))
     done = completed + failed + skipped
     return {
@@ -38,7 +38,7 @@ def _calc_progress(step_runs: list) -> dict:
         "skipped": skipped,
         "in_progress": in_progress,
         "not_started": not_started,
-        "percentage": round(done / total * 100),
+        "percentage": round(completed / total * 100),
     }
 
 

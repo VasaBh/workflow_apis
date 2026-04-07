@@ -134,7 +134,12 @@ async def add_step(
     current_user: dict = Depends(require_roles("admin", "editor")),
 ):
     db = get_db()
-    await check_blueprint_published(db, blueprint_id)
+    bp = await db["blueprints"].find_one({"_id": blueprint_id})
+    if not bp:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response("BLUEPRINT_NOT_FOUND", "Blueprint not found"),
+        )
 
     if body.type not in VALID_STEP_TYPES:
         raise HTTPException(
@@ -222,22 +227,12 @@ async def update_step(
     current_user: dict = Depends(require_roles("admin", "editor")),
 ):
     db = get_db()
-
-    # Allow order-only updates on published blueprints (non-breaking, affects future runs only).
-    # Any other field change still requires the blueprint to be in draft state.
-    non_order_fields = [f for f in ["name", "type", "script_id", "script_params", "entry",
-                                     "dependencies", "on_failure", "retry_count", "timeout_seconds",
-                                     "validation_rules"]
-                        if getattr(body, f, None) is not None]
-    if non_order_fields:
-        await check_blueprint_published(db, blueprint_id)
-    else:
-        bp = await db["blueprints"].find_one({"_id": blueprint_id})
-        if not bp:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=error_response("BLUEPRINT_NOT_FOUND", "Blueprint not found"),
-            )
+    bp = await db["blueprints"].find_one({"_id": blueprint_id})
+    if not bp:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response("BLUEPRINT_NOT_FOUND", "Blueprint not found"),
+        )
 
     step = await db["steps"].find_one({"_id": step_id, "blueprint_id": blueprint_id})
     if not step:
@@ -275,7 +270,12 @@ async def delete_step(
     current_user: dict = Depends(require_roles("admin", "editor")),
 ):
     db = get_db()
-    await check_blueprint_published(db, blueprint_id)
+    bp = await db["blueprints"].find_one({"_id": blueprint_id})
+    if not bp:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response("BLUEPRINT_NOT_FOUND", "Blueprint not found"),
+        )
 
     step = await db["steps"].find_one({"_id": step_id, "blueprint_id": blueprint_id})
     if not step:
