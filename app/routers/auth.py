@@ -48,7 +48,11 @@ async def login(body: LoginRequest):
             detail=error_response("INVALID_CREDENTIALS", "Invalid email or password"),
         )
 
+    now = datetime.now(timezone.utc).isoformat()
+    await db["users"].update_one({"_id": user["_id"]}, {"$set": {"last_login": now}})
+
     user_dict = doc_to_dict(user)
+    user_dict["last_login"] = now
     access_token = create_token(
         user_dict["id"],
         user_dict["role"],

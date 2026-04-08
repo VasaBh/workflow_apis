@@ -125,6 +125,7 @@ async def create_user(
         "email": body.email,
         "password_hash": hash_password(body.password),
         "role": body.role,
+        "last_login": None,
         "created_at": now,
         "updated_at": now,
     }
