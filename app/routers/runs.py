@@ -234,6 +234,31 @@ async def get_run(
     return success_response(run_dict)
 
 
+@router.delete("/")
+async def delete_all_runs(
+    _: dict = Depends(require_roles("admin")),
+):
+    db = get_db()
+    # Block if any run is currently in progress
+    active = await db["runs"].find_one({"status": "in_progress"})
+    if active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=error_response("RUN_IS_ACTIVE", "Cannot delete runs while a run is in progress"),
+        )
+
+    runs_cursor = db["runs"].find({}, {"_id": 1})
+    runs = await runs_cursor.to_list(length=100000)
+    run_ids = [r["_id"] for r in runs]
+
+    if not run_ids:
+        return success_response({"message": "No runs to delete", "deleted_count": 0})
+
+    await db["step_runs"].delete_many({"run_id": {"$in": run_ids}})
+    result = await db["runs"].delete_many({})
+    return success_response({"message": "All runs deleted successfully", "deleted_count": result.deleted_count})
+
+
 @router.delete("/{run_id}")
 async def delete_run(
     run_id: str,

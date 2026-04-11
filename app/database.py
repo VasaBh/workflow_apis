@@ -50,7 +50,7 @@ async def add_indexes():
     await db["step_runs"].create_index("run_id")
     await db["steps"].create_index("blueprint_id")
     await db["script_versions"].create_index("script_id")
-    await db["notifications"].create_index("user_id")
+    await db["notifications"].create_index("created_at")
     await db["runs"].create_index("blueprint_id")
     await db["runs"].create_index("status")
 

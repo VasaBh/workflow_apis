@@ -48,7 +48,7 @@ async def websocket_notifications(
     websocket: WebSocket,
     token: str = Query(default=""),
 ):
-    """Push new notifications to the connected user in real-time."""
+    """Broadcast new notifications to all connected users in real-time."""
     user = await _authenticate_ws(token)
     if not user:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -58,15 +58,14 @@ async def websocket_notifications(
     db = get_db()
     user_id = user["_id"]
 
-    # Track the newest notification seen so we only push new ones
-    latest_cursor = db["notifications"].find({"user_id": user_id}).sort("created_at", -1).limit(1)
+    # Track the newest globally-seen notification so we only push new ones
+    latest_cursor = db["notifications"].find({}).sort("created_at", -1).limit(1)
     latest = await latest_cursor.to_list(length=1)
     last_seen_at = latest[0]["created_at"] if latest else datetime.now(timezone.utc).isoformat()
 
     try:
         while True:
             new_cursor = db["notifications"].find({
-                "user_id": user_id,
                 "created_at": {"$gt": last_seen_at},
             }).sort("created_at", 1)
             new_notifications = await new_cursor.to_list(length=100)
@@ -74,8 +73,7 @@ async def websocket_notifications(
             if new_notifications:
                 last_seen_at = new_notifications[-1]["created_at"]
                 unread_count = await db["notifications"].count_documents({
-                    "user_id": user_id,
-                    "read": False,
+                    "read_by.user_id": {"$ne": user_id},
                 })
                 await websocket.send_json({
                     "type": "notifications",
@@ -85,7 +83,10 @@ async def websocket_notifications(
                             "event_type": n.get("event_type"),
                             "title": n.get("title"),
                             "message": n.get("message"),
-                            "read": n.get("read", False),
+                            "read": any(
+                                e["user_id"] == user_id
+                                for e in (n.get("read_by") or [])
+                            ),
                             "reference_id": n.get("reference_id"),
                             "created_at": n.get("created_at"),
                         }
@@ -95,7 +96,7 @@ async def websocket_notifications(
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(15)
 
     except WebSocketDisconnect:
         pass
@@ -123,6 +124,9 @@ async def websocket_run_stream(
     if not run:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
+
+    blueprint = await db["blueprints"].find_one({"_id": run.get("blueprint_id")}, {"name": 1})
+    blueprint_name = blueprint.get("name") if blueprint else None
 
     await websocket.accept()
 
@@ -162,6 +166,7 @@ async def websocket_run_stream(
             if run_changed or step_updates:
                 await websocket.send_json({
                     "run_id": run_id,
+                    "blueprint_name": blueprint_name,
                     "run_status": current_run_status,
                     "step_updates": step_updates,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -170,13 +175,14 @@ async def websocket_run_stream(
             if current_run_status in terminal_states:
                 await websocket.send_json({
                     "run_id": run_id,
+                    "blueprint_name": blueprint_name,
                     "run_status": current_run_status,
                     "done": True,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
                 break
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
 
     except WebSocketDisconnect:
         pass

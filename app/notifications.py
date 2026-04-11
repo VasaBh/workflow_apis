@@ -4,12 +4,13 @@ import hmac
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Optional
 
 import httpx
 
 from app.database import get_db, docs_to_list
 
+MAX_NOTIFICATIONS = 100
 
 VALID_EVENT_TYPES = [
     "run_started", "run_completed", "run_failed", "run_cancelled",
@@ -19,26 +20,39 @@ VALID_EVENT_TYPES = [
 
 
 async def create_notification(
-    user_id: str,
     event_type: str,
     title: str,
     message: str,
     reference_id: Optional[str] = None,
 ):
-    """Insert a notification document for a user."""
+    """Insert a single broadcast notification document and enforce max 100 cap."""
     db = get_db()
     now = datetime.now(timezone.utc).isoformat()
     doc = {
         "_id": str(uuid.uuid4()),
-        "user_id": user_id,
         "event_type": event_type,
         "title": title,
         "message": message,
-        "read": False,
-        "created_at": now,
         "reference_id": reference_id,
+        "read_by": [],
+        "created_at": now,
     }
     await db["notifications"].insert_one(doc)
+
+    # Enforce cap: delete oldest notifications beyond MAX_NOTIFICATIONS
+    total = await db["notifications"].count_documents({})
+    if total > MAX_NOTIFICATIONS:
+        excess_cursor = (
+            db["notifications"]
+            .find({}, {"_id": 1})
+            .sort("created_at", 1)
+            .limit(total - MAX_NOTIFICATIONS)
+        )
+        excess = await excess_cursor.to_list(length=total - MAX_NOTIFICATIONS)
+        if excess:
+            ids = [d["_id"] for d in excess]
+            await db["notifications"].delete_many({"_id": {"$in": ids}})
+
     return doc
 
 
@@ -47,17 +61,10 @@ async def notify_all_users(
     title: str,
     message: str,
     reference_id: Optional[str] = None,
-    roles: Optional[List[str]] = None,
+    roles=None,  # kept for API compatibility, ignored (broadcast to all)
 ):
-    """Notify all users (optionally filtered by roles)."""
-    db = get_db()
-    query = {}
-    if roles:
-        query["role"] = {"$in": roles}
-    users_cursor = db["users"].find(query, {"_id": 1})
-    users = await users_cursor.to_list(length=1000)
-    for user in users:
-        await create_notification(user["_id"], event_type, title, message, reference_id)
+    """Broadcast a single notification to all users."""
+    return await create_notification(event_type, title, message, reference_id)
 
 
 def _sign_payload(secret: str, payload: dict) -> str:
